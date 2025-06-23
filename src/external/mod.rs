@@ -1,11 +1,21 @@
 use std::env;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::error;
+use crate::external::model::SendMessageResponseStream;
 
 pub mod streaming_client;
-mod model;
-mod client;
-mod auth;
+pub mod model;
+pub mod client;
+pub mod auth;
+pub mod error;
+
+pub use client::GoogleModel;
+
+#[async_trait]
+pub trait StreamingClient {
+    async fn send_message(&self, message: ConversationStateMessage) -> error::Result<SendMessageResponseStream>;
+}
 
 /// ConversationState capable of being sent as a message via the streaming client
 pub struct ConversationStateMessage {
@@ -19,6 +29,7 @@ pub enum ChatMessage {
     LlmResponseMessage(LlmResponseMessage),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserInputMessage {
     pub content: String,
     pub user_input_message_context: Option<UserInputMessageContext>,
@@ -26,6 +37,7 @@ pub struct UserInputMessage {
 
 /// Stores context from the user's "working environment", such as environment variables,
 /// git status, etc.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserInputMessageContext {
     pub env_state: Option<EnvState>,
     pub git_state: Option<GitState>,
@@ -96,4 +108,10 @@ impl ConversationStateMessage {
             history: Some(history),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum LlmServerProvider {
+    LlamaCpp,
+    GoogleAiStudio{ model: GoogleModel },
 }

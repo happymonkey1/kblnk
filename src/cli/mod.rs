@@ -8,11 +8,11 @@ use thiserror::Error;
 use tracing::Level;
 use crate::logging::{init_logging, LogArgs};
 
-pub const CLI_NAME: &str = "kb-vibe-cli";
+pub const CLI_NAME: &str = "KBLNK";
 
 const CHAT_LOG_FILE_NAME: &str = "chat.log";
 
-const KB_VIBE_LOG_STDOUT: &str = "KB_VIBE_LOG_STDOUT";
+const KBLNK_ENV_LOG_STDOUT: &str = "KBLNK_LOG_STDOUT";
 
 #[derive(Debug, Error)]
 pub enum CliError {
@@ -58,7 +58,7 @@ impl Cli {
                     false => None,
                 }
             },
-            log_to_stdout: std::env::var_os(KB_VIBE_LOG_STDOUT).is_some() || self.verbose > 0,
+            log_to_stdout: std::env::var_os(KBLNK_ENV_LOG_STDOUT).is_some() || self.verbose > 0,
             delete_old_log_file: false,
         });
 

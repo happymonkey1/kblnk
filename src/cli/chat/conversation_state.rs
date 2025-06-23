@@ -145,7 +145,7 @@ impl ConversationState {
     }
     
     /// Convert into a [external::ConversationStateMessage] capable of being sent to external APIs
-    async fn as_sendable_conversation_state(&mut self) -> ConversationStateMessage {
+    pub(crate) async fn as_sendable_conversation_state(&mut self) -> ConversationStateMessage {
         debug_assert!(self.next_message.is_some(), "next_message should not be null");
         self.history.drain(self.valid_history_range.1..);
         self.history.drain(..self.valid_history_range.0);

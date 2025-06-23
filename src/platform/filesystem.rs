@@ -1,12 +1,110 @@
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use crate::platform::filesystem::inner::Inner;
+use crate::platform::KBLNK_DEFAULT_APP_CONFIG_DIR_NAME;
 
+/// Wrapper for filesystem utilities for easier testing
+#[derive(Clone, Debug, Default)]
+pub struct Filesystem(inner::Inner);
 
-#[derive(Clone, Debug)]
-pub struct Filesystem;
+mod inner {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, Default)]
+    pub(super) enum Inner {
+        #[default]
+        Real,
+        Chroot(Arc<tempfile::TempDir>),
+        Mock(Arc<Mutex<HashMap<PathBuf, Vec<u8>>>>)
+    }
+}
 
 impl Filesystem {
     pub fn new() -> Self {
-        Self {
-            
+        Self::default()
+    }
+    
+    pub fn new_chroot() -> Self {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp directory");
+        Self(Inner::Chroot(Arc::new(temp_dir)))
+    }
+
+    pub async fn read(&self, path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
+        match &self.0 {
+            Inner::Real => tokio::fs::read(path).await,
+            Inner::Chroot(root) => tokio::fs::read(root.path().join(path)).await,
+            Inner::Mock(map) => {
+                let Ok(lock) = map.lock() else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, "lock poisoned"));
+                };
+
+                let Some(data) = lock.get(path.as_ref()) else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "not found"))
+                };
+
+                Ok(data.clone())
+            },
         }
     }
+    
+    pub async fn read_to_string(&self, path: impl AsRef<Path>) -> std::io::Result<String> {
+        match &self.0 {
+            Inner::Real => tokio::fs::read_to_string(path).await,
+            Inner::Chroot(root) => tokio::fs::read_to_string(root.path().join(path)).await,
+            Inner::Mock(map) => {
+                let Ok(lock) = map.lock() else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, "lock poisoned"));
+                };
+
+                let Some(data) = lock.get(path.as_ref()) else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "not found"))
+                };
+                
+                let Ok(str) = String::from_utf8(data.clone()) else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid data"))
+                };
+
+                Ok(str)
+            }
+        }
+    }
+
+    pub async fn exists(&self, path: impl AsRef<Path>) -> bool {
+        match &self.0 {
+            Inner::Real => path.as_ref().exists(),
+            Inner::Chroot(root) => root.path().join(path).exists(),
+            Inner::Mock(map) => {
+                let Ok(lock) = map.lock() else {
+                    panic!("lock poisoned")
+                };
+                
+                lock.contains_key(path.as_ref())
+            }
+        }
+    }
+    
+    pub async fn write(&self, path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
+        match &self.0 {
+            Inner::Real => tokio::fs::write(path, content).await,
+            Inner::Chroot(root) => tokio::fs::write(root.path().join(path), content).await,
+            Inner::Mock(map) => {
+                let Ok(mut lock) = map.lock() else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, "lock poisoned"))
+                };
+                
+                lock.insert(path.as_ref().to_owned(), content.as_ref().to_owned());
+                Ok(())
+            }
+        }
+    }
+}
+
+pub fn get_home_directory() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+pub fn get_app_config_directory() -> Option<PathBuf> {
+    Some(get_home_directory()?.join(KBLNK_DEFAULT_APP_CONFIG_DIR_NAME))
 }

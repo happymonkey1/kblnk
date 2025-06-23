@@ -1,65 +1,92 @@
 use thiserror::Error;
-use crate::external::ConversationStateMessage;
-use crate::external::model::SendMessageResponse;
+use tracing::info;
+use crate::external::auth::auth_credentials::AuthCredentials;
+pub(crate) use crate::external::{ConversationStateMessage, LlmServerProvider, StreamingClient};
+use crate::external::client::google_streaming_client::{GoogleStreamingClient, GoogleStreamingClientConfig};
+use crate::external::model::{SendMessageResponseStream};
 
-pub trait StreamingClient {
-    async fn send_message(&self, message: ConversationStateMessage) -> Result<SendMessageResponse>;
-}
+use crate::external::error::{Result, StreamingClientError};
 
 pub struct StreamingClientImpl {
-    inner: inner::Inner,
+    inner: Box<dyn StreamingClient>,
 }
-
-mod inner {
-    use std::sync::{Arc, Mutex};
-    use crate::external::client::google_streaming_client::GoogleStreamingClient;
-
-    #[derive(Clone, Debug)]
-    pub enum Inner{
-        GoogleAiStudio(GoogleStreamingClient),
-        HttpsStreamingClient(),
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum StreamingClientError {
-    #[error("invalid auth credentials type")]
-    InvalidAuthCredentialsType,
-    
-    #[error("bad gateway")]
-    BadGateway,
-    
-    #[error("generic server error")]
-    ServerError,
-    
-    #[error("bad request")]
-    BadRequest,
-    
-    #[error("generic forbidden error")]
-    Forbidden,
-    
-    #[error("generic unhandled internal cli error")]
-    InternalError,
-}
-
-pub type Result<T> = std::result::Result<T, StreamingClientError>;
 
 impl StreamingClientImpl {
-    pub fn new() -> Result<Self> {
-
+    pub async fn new(config: StreamingClientConfig) -> Result<Self> {
+        let creds = config.auth_credentials.ok_or_else(|| StreamingClientError::InvalidAuthCredentials)?;
+        
+        let client = match config.llm_server_provider {
+            LlmServerProvider::LlamaCpp => todo!("LLamaCpp does not have a supported StreamingClient at the moment"),
+            LlmServerProvider::GoogleAiStudio { model } => {
+                info!("Building Google streaming client");
+                let api_key = creds.google_api_key.ok_or_else(|| StreamingClientError::InvalidAuthCredentials)?;
+                
+                let config = GoogleStreamingClientConfig{
+                    model,
+                };
+                
+                GoogleStreamingClient::new(api_key, config).await
+            }
+        }?;
+        
+        Ok(StreamingClientImpl{
+            inner: Box::new(client),
+        })
     }
 
     pub async fn send_message(
         &self,
         conversation_state_message: ConversationStateMessage
-    ) -> Result<SendMessageResponse> {
+    ) -> Result<SendMessageResponseStream> {
+        self.inner.send_message(conversation_state_message).await
+    }
+}
 
-        match &self.inner {
-            inner::Inner::GoogleAiStudio(client) => {
+pub struct StreamingClientConfig {
+    /// LLM Server provider
+    llm_server_provider: LlmServerProvider,
+    /// Optional authentication credentials
+    /// Some language model providers may not require credentials (For example, self-hosted)
+    auth_credentials: Option<AuthCredentials> 
+}
 
-                client.generative_model()
-            }
+impl StreamingClientConfig {
+    pub fn builder() -> StreamingClientConfigBuilder {
+        StreamingClientConfigBuilder {
+            llm_server_provider: None,
+            auth_credentials: None,
         }
+    }
+}
 
+#[derive(Debug, Error)]
+pub enum StreamingClientConfigBuilderError {
+    #[error("Required option '{0}' is not present")]
+    RequiredOptionNotFound(String),
+}
+
+pub struct StreamingClientConfigBuilder {
+    llm_server_provider: Option<LlmServerProvider>,
+    auth_credentials: Option<AuthCredentials>,
+}
+
+impl StreamingClientConfigBuilder {
+    pub fn build(self) -> std::result::Result<StreamingClientConfig, StreamingClientConfigBuilderError> {
+        let llm_server_provider = self.llm_server_provider.ok_or_else(|| StreamingClientConfigBuilderError::RequiredOptionNotFound("llm_server_provider".to_string()))?;
+        
+        Ok(StreamingClientConfig {
+            llm_server_provider, 
+            auth_credentials: self.auth_credentials,
+        })
+    }
+    
+    pub fn with_llm_provider(mut self, llm_server_provider: LlmServerProvider) -> Self {
+        self.llm_server_provider = Some(llm_server_provider);
+        self
+    }
+    
+    pub fn with_auth_credentials(mut self, auth_credentials: Option<AuthCredentials>) -> Self {
+        self.auth_credentials = auth_credentials;
+        self
     }
 }

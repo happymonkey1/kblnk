@@ -4,41 +4,32 @@ mod context;
 pub mod prompt;
 mod conversation_state;
 pub mod message;
+mod error;
 
 use std::process::ExitCode;
 use std::sync::Arc;
 use crossterm::{cursor, execute, queue, style};
-use crossterm::style::{style, Color, Stylize};
+use crossterm::style::{Color, Stylize};
 use rand_distr::Alphanumeric;
-use thiserror::Error;
 use tokio::signal::ctrl_c;
 use tracing::{error, info, warn};
-use uuid::uuid;
-use crate::cli::chat::ChatError::Interrupted;
+use crate::cli::chat::error::ChatError;
+use crate::cli::chat::error::Result;
 use crate::cli::chat::command::{ChatCommand, ContextSubcommand};
 use crate::cli::chat::conversation_state::ConversationState;
 use crate::cli::CLI_NAME;
 use crate::cli::util::input_source::InputSource;
-use crate::external::streaming_client::StreamingClient;
+use crate::external::auth::auth_credentials::AuthCredentials;
+use crate::external::LlmServerProvider;
+use crate::external::model::SendMessageResponseStream;
+use crate::external::streaming_client::{StreamingClient, StreamingClientConfig, StreamingClientImpl};
 use crate::platform::PlatformContext;
 use crate::util::shared_writer::SharedWriter;
 
 const HELP_TEXT: &str = "Help text should be here...";
 const CONTEXT_HELP_TEXT: &str = "Context help text should be here...";
 
-type Result<T> = std::result::Result<T, ChatError>;
 
-#[derive(Debug, Error)]
-pub enum ChatError {
-    #[error("{0}")]
-    InitializationError(String),
-    #[error("interrupted")]
-    Interrupted,
-    #[error("{0}")]
-    Readline(#[from] rustyline::error::ReadlineError),
-    #[error("{0}")]
-    StdError(#[from] std::io::Error)
-}
 
 pub enum Role {
     User,
@@ -73,7 +64,12 @@ async fn init_chat_context() -> Result<ChatContext> {
 
     let conversation_id = Alphanumeric.sample_string(&mut rand::rng(), 9);
     
-    let client = StreamingClient::new();
+    let client = StreamingClientImpl::new(
+        StreamingClientConfig::builder()
+            .with_llm_provider(LlmServerProvider::GoogleAiStudio { model: crate::external::GoogleModel::Gemini25Flash })
+            .with_auth_credentials(Some(AuthCredentials::build_config(Arc::clone(&context)).await?))
+            .build()?
+    ).await?;
     
     let chat_context = ChatContext::new(
         context,
@@ -91,14 +87,14 @@ pub struct ChatContext {
     output: SharedWriter,
     input_source: InputSource,
     conversation_state: ConversationState,
-    client: StreamingClient,
+    client: StreamingClientImpl,
 }
 
 #[derive(Debug)]
 enum ChatState {
     PromptUser,
     UserInput { input: String },
-    HandleLlmResponse,
+    HandleLlmResponse(SendMessageResponseStream),
     Exit,
 }
 
@@ -114,7 +110,7 @@ impl ChatContext {
         conversation_id: &str,
         output: SharedWriter,
         input_source: InputSource,
-        client: StreamingClient,
+        client: StreamingClientImpl,
     ) -> Result<Self> {
         let context_clone = Arc::clone(&context);
         let conversation_state = ConversationState::new(context_clone, conversation_id).await;
@@ -145,11 +141,14 @@ impl ChatContext {
                 ChatState::UserInput{ input } => {
                     tokio::select! {
                         res = self.handle_input(input) => res,
-                        Ok(_) = ctrl_c_handler => Err(Interrupted)
+                        Ok(_) = ctrl_c_handler => Err(ChatError::Interrupted)
                     }
                 }
-                ChatState::HandleLlmResponse => {
-                    todo!()
+                ChatState::HandleLlmResponse(response_stream) => {
+                    tokio::select! {
+                        res = self.handle_response(response_stream) => res,
+                        Ok(_) = ctrl_c_handler => Err(ChatError::Interrupted),
+                    }
                 }
                 ChatState::Exit => {
                     info!("Exiting chat loop");
@@ -163,7 +162,7 @@ impl ChatContext {
 
     async fn handle_input(
         &mut self,
-        mut user_input: String,
+        user_input: String,
     ) -> Result<ChatState> {
         let command_result = ChatCommand::parse(&user_input, &mut self.output);
 
@@ -187,7 +186,9 @@ impl ChatContext {
                 execute!(self.output, style::Print("\n"))?;
                 execute!(self.output, style::Print("Thinking..."))?;
 
-                ChatState::HandleLlmResponse(self.client.send_message(conversation_state).await?)
+                let client_message = self.conversation_state.as_sendable_conversation_state().await;
+                
+                ChatState::HandleLlmResponse(self.client.send_message(client_message).await?)
             }
             ChatCommand::Execute { command } => {
                 queue!(self.output, style::Print('\n'))?;
@@ -278,6 +279,13 @@ impl ChatContext {
             }
         }
     }
+    
+    async fn handle_response(
+        &mut self,
+        response_stream: SendMessageResponseStream
+    ) -> Result<ChatState> {
+        todo!("handle response is not implemented!")
+    }
 
     async fn handle_state_execution_result(
         &mut self,
@@ -294,15 +302,7 @@ impl ChatContext {
                         execute!(self.output, style::Print("\n\n"))?;
                         ()
                     }
-                    ChatError::InitializationError(_) => {
-                        return Err(err)
-                    },
-                    ChatError::Readline(_) => {
-                        return Err(err)
-                    }
-                    ChatError::StdError(_) => {
-                        return Err(err)
-                    }
+                    err => return Err(err) 
                 }
 
                 Ok(ChatState::PromptUser)

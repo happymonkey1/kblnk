@@ -8,7 +8,8 @@ const CONTEXT_FILES_MAX_SIZE: usize = 150 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ContextError {
-    
+    #[error(transparent)]
+    IoError(#[from] std::io::Error)
 }
 
 pub type Result<T> = std::result::Result<T, ContextError>;
@@ -125,7 +126,7 @@ impl ContextManager {
         let mut context_files = Vec::new();
         
         for path in &self.global_config.file_paths {
-            let content = std::fs::read_to_string(path).await?;
+            let content = self.context.fs().read_to_string(path).await?;
             context_files.push(ContextFile{ filename: path.clone(), content });
         }
         
