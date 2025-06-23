@@ -1,10 +1,11 @@
 pub mod chat;
 mod util;
+mod error;
 
 use clap::ArgAction;
 use std::process::ExitCode;
 use clap::{Parser, Subcommand};
-use thiserror::Error;
+use error::{CliError, Result};
 use tracing::Level;
 use crate::logging::{init_logging, LogArgs};
 
@@ -13,13 +14,6 @@ pub const CLI_NAME: &str = "KBLNK";
 const CHAT_LOG_FILE_NAME: &str = "chat.log";
 
 const KBLNK_ENV_LOG_STDOUT: &str = "KBLNK_LOG_STDOUT";
-
-#[derive(Debug, Error)]
-pub enum CliError {
-
-}
-
-pub type Result<T> = std::result::Result<T, CliError>;
 
 #[derive(Debug, PartialEq, Subcommand)]
 pub enum CliRootCommand {
@@ -67,8 +61,8 @@ impl Cli {
                 CliRootCommand::Chat => chat::start_chat_session().await,
             }
             None => chat::start_chat_session().await,
-        };
+        }?;
 
-        Ok(ExitCode::SUCCESS)
+        Ok(res)
     }
 }

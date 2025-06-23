@@ -20,9 +20,12 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let res = tokio_runtime.block_on(cli.execute());
 
     match res {
-        Ok(exit_code) => Ok(exit_code),
+        Ok(exit_code) => {
+            println!("Exiting with code: {exit_code:?}");
+            Ok(exit_code)
+        },
         Err(err) => {
-            eprintln!("{} {err:?}", "error:");
+            println!("error: {err:?}");
             Ok(ExitCode::FAILURE)
         }
     }

@@ -4,8 +4,9 @@ mod context;
 pub mod prompt;
 mod conversation_state;
 pub mod message;
-mod error;
+pub mod error;
 mod util;
+mod input;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -21,9 +22,11 @@ use crate::cli::chat::conversation_state::ConversationState;
 use crate::cli::CLI_NAME;
 use crate::cli::util::input_source::InputSource;
 use crate::external::auth::auth_credentials::AuthCredentials;
+use crate::external::error::StreamingClientError;
 use crate::external::LlmServerProvider;
 use crate::external::model::SendMessageResponseStream;
 use crate::external::streaming_client::{StreamingClientConfig, StreamingClientImpl};
+use crate::platform::error::PlatformError;
 use crate::platform::PlatformContext;
 use crate::util::shared_writer::SharedWriter;
 
@@ -50,6 +53,7 @@ pub async fn start_chat_session() -> Result<ExitCode> {
 }
 
 async fn init_chat_context() -> Result<ChatContext> {
+    info!("Entered init_chat_context");
 
     let stdin = std::io::stdin();
     let context = PlatformContext::new();
@@ -57,19 +61,33 @@ async fn init_chat_context() -> Result<ChatContext> {
     let output = SharedWriter::stderr();
     let (prompt_request_sender, prompt_request_receiver) = std::sync::mpsc::channel::<Option<String>>();
     let (prompt_response_sender, prompt_response_receiver) = std::sync::mpsc::channel::<Vec<String>>();
-    let input_source = match InputSource::new(prompt_request_sender, prompt_response_receiver) {
+    let mut input_source = match InputSource::new(prompt_request_sender, prompt_response_receiver) {
         Ok(input_source) => input_source,
         Err(err) => return Err(ChatError::InitializationError(format!("Failed to initialize InputSource: {err:?}")))
     };
 
     let conversation_id = Alphanumeric.sample_string(&mut rand::rng(), 9);
-    
-    let client = StreamingClientImpl::new(
-        StreamingClientConfig::builder()
-            .with_llm_provider(LlmServerProvider::GoogleAiStudio { model: crate::external::GoogleModel::Gemini25Flash })
-            .with_auth_credentials(Some(AuthCredentials::build_config(Arc::clone(&context)).await?))
-            .build()?
-    ).await?;
+
+    // Load auth credentials from a serialized file
+    // When the file is not present, a default auth credentials source is created
+    let auth_credentials = AuthCredentials::build_config(Arc::clone(&context)).await?;
+
+    // Try to load config from a serialized file
+    // When the file is not present (initial launch), prompt the user to enter requisite initialization information
+    let streaming_client_config = match StreamingClientConfig::build_streaming_client_config(Arc::clone(&context)).await {
+        Ok(config) => Ok(config),
+        Err(err) => match err {
+            StreamingClientError::PlatformError(PlatformError::FileNotExistError) => {
+                create_streaming_client_config_with_user(Arc::clone(&context), &mut input_source, auth_credentials).await
+            }
+            err => Err(ChatError::StreamingClientError(err)),
+        }
+    }?;
+
+    debug_assert!(streaming_client_config.auth_credentials.is_some(), "auth credentials are not valid");
+
+    let client = StreamingClientImpl::new(streaming_client_config).await?;
+    info!("Finished constructing streaming client");
     
     let chat_context = ChatContext::new(
         context,
@@ -78,12 +96,82 @@ async fn init_chat_context() -> Result<ChatContext> {
         input_source,
         client,
     ).await?;
+    info!("Finished construct chat context");
     
     Ok(chat_context)
 }
 
+// TODO: refactor this mess
+pub async fn create_streaming_client_config_with_user(
+    context: Arc<PlatformContext>,
+    input_source: &mut InputSource,
+    mut auth_credentials: AuthCredentials,
+) -> Result<StreamingClientConfig> {
+    let model: LlmServerProvider;
+    
+    
+    // TODO: provide user with list of available models
+
+    // Prompt user for the language model provider
+    loop {
+        let ctrl_c_handler = ctrl_c();
+        
+        let model_input = tokio::select! {
+            Ok(_) = ctrl_c_handler => return Err(ChatError::Interrupted),
+            res = input::read_user_input(input_source, Some("Please select your model provider: ")) => res, 
+        };
+        
+        match model_input {
+            Ok(model_input) => {
+                if let Some(found_model) = LlmServerProvider::try_from_string(model_input.as_str()) {
+                    model = found_model;
+                    break;
+                } 
+            }
+            Err(ChatError::Interrupted) => return Err(ChatError::Interrupted),
+            Err(err) => {
+                warn!("Unhandled chat error during user input: {err:?}");
+            }
+        }
+    }
+
+    // Prompt user for credentials based on the found model
+    loop {
+        match model {
+            LlmServerProvider::LlamaCpp => todo!("LlamaCpp model provider is not supported!"),
+            LlmServerProvider::GoogleAiStudio { .. } => {
+                let api_key = input::read_user_input(input_source, Some("Please input your Google AI Studio API key: ")).await;
+                
+                if api_key.is_ok() {
+                    let api_key = api_key?;
+                    let api_key_redo = input::read_user_input(input_source, Some("Please re-enter your Google AI Studio API key: ")).await;
+                    
+                    if api_key_redo.is_ok() {
+                        let api_key_redo = api_key_redo?;
+                        if api_key.eq(&api_key_redo) {
+                            auth_credentials.google_api_key = Some(api_key);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    auth_credentials.save_config_to_default_location(Arc::clone(&context)).await?;
+    
+    let streaming_client_config = StreamingClientConfig::builder()
+        .with_llm_provider(model)
+        .with_auth_credentials(Some(auth_credentials))
+        .build()?;
+    
+    streaming_client_config.save_config_to_default_location(Arc::clone(&context)).await?;
+    
+    Ok(streaming_client_config)
+}
+
 pub struct ChatContext {
-    ctx: Arc<PlatformContext>,
+    context: Arc<PlatformContext>,
     output: SharedWriter,
     input_source: InputSource,
     conversation_state: ConversationState,
@@ -116,7 +204,7 @@ impl ChatContext {
         let conversation_state = ConversationState::new(context_clone, conversation_id).await;
         
         Ok(Self {
-            ctx: context,
+            context: context,
             output,
             input_source,
             conversation_state,
@@ -198,7 +286,7 @@ impl ChatContext {
                     std::process::Command::new("bash").args(["-c", &command]).status()
                 };
                 queue!(self.output, style::Print('\n'))?;
-                
+
                 if status.is_err() {
                     error!("Something went wrong executing command: {:?}", status.err());
                 }
@@ -206,20 +294,20 @@ impl ChatContext {
                 ChatState::PromptUser
             }
             ChatCommand::Help => {
-                execute!(self.output, style::Print(HELP_TEXT));
+                execute!(self.output, style::Print(HELP_TEXT))?;
 
                 ChatState::PromptUser
             }
             ChatCommand::Clear => {
                 warn!("ChatCommand clear is not supported");
-                
+
                 debug_assert!(false, "clear is not implemented");
 
                 ChatState::PromptUser
             }
             ChatCommand::Exit => {
                 // TODO: nice llm goodbye message
-                execute!(self.output, style::Print("Thanks for chatting!"));
+                execute!(self.output, style::Print("Thanks for chatting!"))?;
 
                 ChatState::Exit
             }
@@ -227,13 +315,13 @@ impl ChatContext {
                 match subcommand {
                     ContextSubcommand::Show => {
                         warn!("ContextSubCommand Show is not supported");
-                        
+
                         debug_assert!(false, "context show is not implemented");
 
                         ChatState::PromptUser
                     }
                     ContextSubcommand::Help => {
-                        execute!(self.output, style::Print(CONTEXT_HELP_TEXT));
+                        execute!(self.output, style::Print(CONTEXT_HELP_TEXT))?;
 
                         ChatState::PromptUser
                     }
@@ -241,7 +329,7 @@ impl ChatContext {
             },
             ChatCommand::Usage => {
                 let backend_state = self.conversation_state.backend_conversation_state().await;
-                
+
                 if !backend_state.dropped_context_files.is_empty() {
                     execute!(
                         self.output,
@@ -276,7 +364,7 @@ impl ChatContext {
 
                 let left_over_width = progress_bar_width
                     - std::cmp::min(context_width + llm_width + user_width, progress_bar_width);
-                
+
                 queue!(
                     self.output,
                     style::Print(format!(
@@ -310,7 +398,7 @@ impl ChatContext {
                         (total_token_used as f32 / context_window_size as f32) * 100.0
                     )),
                 )?;
-                
+
                 ChatState::PromptUser
             }
         })
@@ -320,7 +408,7 @@ impl ChatContext {
         &mut self,
     ) -> Result<ChatState> {
         info!("Entered prompt_user");
-        let user_input = match self.read_user_input("", false) {
+        let user_input = match self.read_user_input("> ", false) {
             Some(user_input) => user_input,
             None => return Ok(ChatState::Exit)
         };
@@ -358,7 +446,9 @@ impl ChatContext {
                     ctrl_c = true;
                 },
                 (Ok(None), true) => return None,
-                (Err(_), _) => return None,
+                (Err(_), _) => {
+                    /* no-op */
+                },
             }
         }
     }
@@ -392,12 +482,12 @@ impl ChatContext {
             }
         }
     }
-    
+
     fn get_terminal_width(&self) -> usize {
         // TODO: dynamically retrieve terminal width
         let terminal_width = 80;
         warn!("Terminal width is defaulting to fixed value: {}", terminal_width);
-        
+
         terminal_width
     }
 }

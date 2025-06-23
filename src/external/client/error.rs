@@ -4,12 +4,12 @@ impl From<google_ai_rs::error::Error> for StreamingClientError {
     fn from(value: google_ai_rs::error::Error) -> Self {
         match value {
             google_ai_rs::error::Error::Setup(_) => StreamingClientError::InternalError,
-            google_ai_rs::error::Error::Net(_) => StreamingClientError::BadGateway,
+            google_ai_rs::error::Error::Net(_) => StreamingClientError::BadGatewayError,
             google_ai_rs::error::Error::Service(_) => StreamingClientError::ServerError,
             google_ai_rs::error::Error::Stream(_) => StreamingClientError::ServerError,
-            google_ai_rs::error::Error::Auth(_) => StreamingClientError::Forbidden,
-            google_ai_rs::error::Error::InvalidArgument(_) => StreamingClientError::BadRequest,
-            google_ai_rs::error::Error::InvalidContent(_) => StreamingClientError::BadRequest,
+            google_ai_rs::error::Error::Auth(_) => StreamingClientError::ForbiddenError,
+            google_ai_rs::error::Error::InvalidArgument(_) => StreamingClientError::BadRequestError,
+            google_ai_rs::error::Error::InvalidContent(_) => StreamingClientError::BadRequestError,
             _ => StreamingClientError::InternalError,
         }
     }

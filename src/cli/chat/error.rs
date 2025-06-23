@@ -12,6 +12,8 @@ pub enum ChatError {
     InitializationError(String),
     #[error("interrupted")]
     Interrupted,
+    #[error("invalid user input")]
+    InvalidUserInput,
     #[error("{0}")]
     Readline(#[from] rustyline::error::ReadlineError),
     #[error(transparent)]
@@ -22,6 +24,7 @@ pub enum ChatError {
     StreamingClientError(#[from] StreamingClientError),
     #[error(transparent)]
     PlatformError(#[from] PlatformError),
+    
 }
 
 impl From<StreamingClientConfigBuilderError> for ChatError {

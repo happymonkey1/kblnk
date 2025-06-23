@@ -103,6 +103,37 @@ impl Filesystem {
             }
         }
     }
+    
+    pub fn is_dir(&self, path: impl AsRef<Path>) -> bool {
+        match &self.0 {
+            Inner::Real => path.as_ref().is_dir(),
+            Inner::Chroot(root) => root.path().join(path.as_ref()).is_dir(),
+            Inner::Mock(_) => todo!("is_dir is not implemented for Mock filesystem"),
+        }
+    }
+    
+    pub fn is_file(&self, path: impl AsRef<Path>) -> bool {
+        match &self.0 {
+            Inner::Real => path.as_ref().is_file(),
+            Inner::Chroot(root) => root.path().join(path.as_ref()).is_file(),
+            Inner::Mock(_) => todo!("is_file is not implemented for Mock filesystem"),
+        } 
+    }
+    
+    pub async fn create_dir_all(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        if self.is_file(&path) {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"))
+        }
+        
+        match &self.0 {
+            Inner::Real => tokio::fs::create_dir_all(path.as_ref()).await,
+            Inner::Chroot(root) => {
+                let path = root.path().join(path.as_ref());
+                tokio::fs::create_dir_all(path).await
+            }
+            Inner::Mock(_) => todo!("create_dir_all is not implemented for Mock filesystem"),
+        }
+    }
 }
 
 pub fn get_home_directory() -> Option<PathBuf> {

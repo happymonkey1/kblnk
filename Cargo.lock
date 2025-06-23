@@ -870,6 +870,7 @@ dependencies = [
  "ctrlc",
  "dirs",
  "google-ai-rs",
+ "log",
  "rand 0.9.1",
  "rand_distr",
  "rustyline",

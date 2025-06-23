@@ -1,5 +1,6 @@
 use std::env;
 use async_trait::async_trait;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use crate::external::model::SendMessageResponseStream;
@@ -12,6 +13,8 @@ pub mod error;
 mod consts;
 
 pub use client::GoogleModel;
+
+pub const STREAMING_CLIENT_CONFIG_FILE_NAME: &str = "client.json";
 
 #[async_trait]
 pub trait StreamingClient {
@@ -120,4 +123,19 @@ impl ConversationStateMessage {
 pub enum LlmServerProvider {
     LlamaCpp,
     GoogleAiStudio{ model: GoogleModel },
+}
+
+impl LlmServerProvider {
+     
+    pub fn try_from_string(value: &str) -> Option<LlmServerProvider> {
+        match value {
+            "llama" | "llamacpp" | "llama-cpp" => Some(LlmServerProvider::LlamaCpp),
+            "geminiflash" | "gemini-flash" | "gemini-flash-2.5" => Some(LlmServerProvider::GoogleAiStudio { model: GoogleModel::Gemini25Flash }), 
+            _ => {
+                warn!("Unknown LlmServerProvider value: {}", value);
+                None
+            }
+        }
+    }
+    
 }
