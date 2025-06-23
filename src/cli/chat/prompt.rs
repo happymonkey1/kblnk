@@ -9,7 +9,7 @@ use crate::cli::chat::command::{ChatCommand, COMPLETION_COMMANDS};
 use crate::cli::chat::Role;
 
 pub struct Prompt {
-    role: Role,
+    pub(crate) role: Role,
     pub(crate) content: String,
 }
 

@@ -1,15 +1,23 @@
+use std::fmt::format;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::warn;
-use crate::platform::PlatformContext;
+use tracing::{info, warn};
+use crate::cli::chat::KBLNK_CONTEXT_FILENAME;
+use crate::cli::chat::util::token_counter::TokenCounter;
+use crate::platform::{PlatformContext, KBLNK_DEFAULT_APP_CONFIG_DIR_NAME};
+use crate::platform::error::PlatformError;
 
 const CONTEXT_FILES_MAX_SIZE: usize = 150 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum ContextError {
     #[error(transparent)]
-    IoError(#[from] std::io::Error)
+    IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    SerdeJsonError(#[from] serde_json::Error),
+    #[error(transparent)]
+    PlatformError(#[from] PlatformError),
 }
 
 pub type Result<T> = std::result::Result<T, ContextError>;
@@ -51,7 +59,15 @@ impl ContextManager {
     async fn save_config(&self, global: bool) -> Result<()> {
         debug_assert!(global, "Only saving global context is supported for now");
         if global {
-            todo!("save_config global is not finished!")
+            let global_path = self.context.get_global_context_path()?;
+            if self.context.fs().exists(&global_path).await {
+                info!("Found global config, over-writing the existing config file");
+                let config_string = serde_json::to_string(&self.global_config)?;
+                
+                self.context.fs().write(global_path.join("global_config.json"), config_string).await?
+            } else {
+                todo!("save_config for non-existing config file is not implemented!")
+            }
         } else {
             warn!("Saving non-global context is not supported yet")
         }
@@ -149,9 +165,42 @@ impl ContextManager {
 }
 
 async fn load_global_config(context: &Arc<PlatformContext>) -> Result<ContextConfig> {
-    let global_path = 
+    let global_path = context.get_global_context_path()?;
+    let config: ContextConfig = if context.fs().exists(&global_path).await {
+        let content = context.fs().read_to_string(&global_path).await?;
+        serde_json::from_str(content.as_ref())?
+    } else {
+        ContextConfig{
+            file_paths: vec![
+                // App config directory
+                format!("{}/**/*.md", KBLNK_DEFAULT_APP_CONFIG_DIR_NAME),
+                "README.md".to_string(),
+                KBLNK_CONTEXT_FILENAME.to_string(),
+            ],
+        }
+    };
+    
+    Ok(config)
 }
 
 fn default_context() -> Arc<PlatformContext> {
     PlatformContext::new()
+}
+
+fn drop_matched_context_files(files: &mut [ContextFile], limit: usize) -> Result<Vec<ContextFile>> {
+    files.sort_by(|a, b| TokenCounter::count_tokens(&b.content).cmp(&TokenCounter::count_tokens(&a.content)));
+    
+    let mut total_size = 0;
+    let mut dropped_files = Vec::new();
+    
+    for context_file in files.iter() {
+        let size = TokenCounter::count_tokens(context_file.content.as_str());
+        if total_size + size > limit {
+            dropped_files.push(ContextFile{ filename: context_file.filename.clone(), content: context_file.content.clone() });
+        } else {
+            total_size += size;
+        }
+    }
+    
+    Ok(dropped_files)
 }

@@ -1,9 +1,10 @@
 use google_ai_rs::{Content, Part, TryIntoContents};
 use google_ai_rs::genai::ResponseStream;
+use google_ai_rs::proto::GenerateContentResponse;
 use crate::external::{ChatMessage, ConversationStateMessage, LlmResponseMessage, UserInputMessage};
 use crate::external::client::{USER_ENV_CONTEXT_HEADER_END, USER_ENV_CONTEXT_HEADER_START};
 use crate::external::error::StreamingClientError;
-use crate::external::model::SendMessageResponseStream;
+use crate::external::model::{ChatResponseStream, SendMessageResponseStream};
 
 impl TryIntoContents for ConversationStateMessage {
     fn try_into_contents(self) -> Result<Vec<Content>, google_ai_rs::error::Error> {
@@ -66,6 +67,12 @@ impl TryInto<Part> for ChatMessage {
 
 impl From<ResponseStream> for SendMessageResponseStream {
     fn from(value: ResponseStream) -> Self {
-        todo!()
+        SendMessageResponseStream::GoogleAiStudio(value)
+    }
+}
+
+impl From<GenerateContentResponse> for ChatResponseStream {
+    fn from(value: GenerateContentResponse) -> Self {
+        Self::LlmResponseEvent { content: value.text() }
     }
 }

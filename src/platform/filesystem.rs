@@ -31,6 +31,7 @@ impl Filesystem {
         Self(Inner::Chroot(Arc::new(temp_dir)))
     }
 
+    /// Pass through to [tokio::fs::read] in production mode
     pub async fn read(&self, path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
         match &self.0 {
             Inner::Real => tokio::fs::read(path).await,
@@ -48,7 +49,8 @@ impl Filesystem {
             },
         }
     }
-    
+
+    /// Pass through to [tokio::fs::read_to_string] in production mode
     pub async fn read_to_string(&self, path: impl AsRef<Path>) -> std::io::Result<String> {
         match &self.0 {
             Inner::Real => tokio::fs::read_to_string(path).await,
@@ -71,6 +73,7 @@ impl Filesystem {
         }
     }
 
+    /// Pass through to [std::path::Path::exists] in production mode
     pub async fn exists(&self, path: impl AsRef<Path>) -> bool {
         match &self.0 {
             Inner::Real => path.as_ref().exists(),
@@ -84,7 +87,8 @@ impl Filesystem {
             }
         }
     }
-    
+
+    /// Pass through to [tokio::fs::write] in production mode
     pub async fn write(&self, path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
         match &self.0 {
             Inner::Real => tokio::fs::write(path, content).await,
@@ -103,8 +107,4 @@ impl Filesystem {
 
 pub fn get_home_directory() -> Option<PathBuf> {
     dirs::home_dir()
-}
-
-pub fn get_app_config_directory() -> Option<PathBuf> {
-    Some(get_home_directory()?.join(KBLNK_DEFAULT_APP_CONFIG_DIR_NAME))
 }

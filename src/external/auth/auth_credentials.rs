@@ -2,7 +2,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use crate::external::auth::error;
-use crate::external::auth::error::AuthCredentialsError;
 use crate::platform::PlatformContext;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -13,7 +12,7 @@ pub struct AuthCredentials {
 impl AuthCredentials {
 
     pub async fn build_config(context: Arc<PlatformContext>) -> error::Result<AuthCredentials> {
-        let app_dir = context.get_app_config_directory().ok_or_else(|| AuthCredentialsError::InitializationError)?;
+        let app_dir = context.get_app_config_directory()?;
         let config_filepath = app_dir.join("credentials.json");
 
         // try to read existing config
@@ -33,7 +32,7 @@ impl AuthCredentials {
     }
 
     pub fn save_config(&self) {
-
+        todo!("save_config is not implemented")
     }
 }
 

@@ -2,6 +2,7 @@ use thiserror::Error;
 use crate::external::auth::error::AuthCredentialsError;
 use crate::external::error::StreamingClientError;
 use crate::external::streaming_client::StreamingClientConfigBuilderError;
+use crate::platform::error::PlatformError;
 
 pub type Result<T> = std::result::Result<T, ChatError>;
 
@@ -18,7 +19,9 @@ pub enum ChatError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]
-    StreamingClientError(#[from] StreamingClientError)
+    StreamingClientError(#[from] StreamingClientError),
+    #[error(transparent)]
+    PlatformError(#[from] PlatformError),
 }
 
 impl From<StreamingClientConfigBuilderError> for ChatError {
@@ -33,6 +36,7 @@ impl From<AuthCredentialsError> for ChatError {
             AuthCredentialsError::SerdeJsonError(err) => ChatError::SerdeJsonError(err),
             AuthCredentialsError::InitializationError => ChatError::InitializationError("Auth initialization error".to_string()),
             AuthCredentialsError::IoError(err) => ChatError::IoError(err),
+            AuthCredentialsError::PlatformError(err) => ChatError::PlatformError(err),
         }
     }
 }

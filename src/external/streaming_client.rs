@@ -40,6 +40,8 @@ impl StreamingClientImpl {
     ) -> Result<SendMessageResponseStream> {
         self.inner.send_message(conversation_state_message).await
     }
+    
+    pub fn get_context_window_size(&self) -> usize { self.inner.get_context_window_size() }
 }
 
 pub struct StreamingClientConfig {

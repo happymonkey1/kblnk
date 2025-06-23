@@ -5,6 +5,7 @@ pub mod prompt;
 mod conversation_state;
 pub mod message;
 mod error;
+mod util;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -22,14 +23,13 @@ use crate::cli::util::input_source::InputSource;
 use crate::external::auth::auth_credentials::AuthCredentials;
 use crate::external::LlmServerProvider;
 use crate::external::model::SendMessageResponseStream;
-use crate::external::streaming_client::{StreamingClient, StreamingClientConfig, StreamingClientImpl};
+use crate::external::streaming_client::{StreamingClientConfig, StreamingClientImpl};
 use crate::platform::PlatformContext;
 use crate::util::shared_writer::SharedWriter;
 
 const HELP_TEXT: &str = "Help text should be here...";
 const CONTEXT_HELP_TEXT: &str = "Context help text should be here...";
-
-
+pub const KBLNK_CONTEXT_FILENAME: &str = "KBLNK.md";
 
 pub enum Role {
     User,
@@ -198,6 +198,10 @@ impl ChatContext {
                     std::process::Command::new("bash").args(["-c", &command]).status()
                 };
                 queue!(self.output, style::Print('\n'))?;
+                
+                if status.is_err() {
+                    error!("Something went wrong executing command: {:?}", status.err());
+                }
 
                 ChatState::PromptUser
             }
@@ -207,7 +211,9 @@ impl ChatContext {
                 ChatState::PromptUser
             }
             ChatCommand::Clear => {
-                warn!("ChatCommand warn is not supported");
+                warn!("ChatCommand clear is not supported");
+                
+                debug_assert!(false, "clear is not implemented");
 
                 ChatState::PromptUser
             }
@@ -220,6 +226,9 @@ impl ChatContext {
             ChatCommand::Context { subcommand } => {
                 match subcommand {
                     ContextSubcommand::Show => {
+                        warn!("ContextSubCommand Show is not supported");
+                        
+                        debug_assert!(false, "context show is not implemented");
 
                         ChatState::PromptUser
                     }
@@ -229,6 +238,80 @@ impl ChatContext {
                         ChatState::PromptUser
                     }
                 }
+            },
+            ChatCommand::Usage => {
+                let backend_state = self.conversation_state.backend_conversation_state().await;
+                
+                if !backend_state.dropped_context_files.is_empty() {
+                    execute!(
+                        self.output,
+                        style::SetForegroundColor(Color::DarkYellow),
+                        style::Print("\nSome context files are dropped due to size limit, please run "),
+                        style::SetForegroundColor(Color::DarkGreen),
+                        style::Print("/context show "),
+                        style::SetForegroundColor(Color::DarkYellow),
+                        style::Print("to learn more.\n"),
+                        style::SetForegroundColor(Color::Reset)
+                    )?;
+                }
+
+                let context_window_size = self.client.get_context_window_size();
+                let usage_data = backend_state.calculate_conversation_size();
+
+                let context_token_count = usage_data.context_messages;
+                let llm_token_count = usage_data.assistant_messages;
+                let user_token_count = usage_data.user_messages;
+                let total_token_used =
+                    usage_data.context_messages + usage_data.user_messages + usage_data.assistant_messages;
+
+                let window_width = self.get_terminal_width();
+                let progress_bar_width = std::cmp::min(window_width, 80);
+
+                let context_width = ((context_token_count as f64 / context_window_size as f64)
+                    * progress_bar_width as f64) as usize;
+                let llm_width = ((llm_token_count as f64 / context_window_size as f64)
+                    * progress_bar_width as f64) as usize;
+                let user_width = ((user_token_count as f64 / context_window_size as f64)
+                    * progress_bar_width as f64) as usize;
+
+                let left_over_width = progress_bar_width
+                    - std::cmp::min(context_width + llm_width + user_width, progress_bar_width);
+                
+                queue!(
+                    self.output,
+                    style::Print(format!(
+                        "\nCurrent context window ({} of {}k tokens used)\n",
+                        total_token_used,
+                        context_window_size / 1000
+                    )),
+                    style::SetForegroundColor(Color::DarkCyan),
+                    style::Print("|".repeat(if context_width == 0 && context_token_count > 0 {
+                        1
+                    } else {
+                        0
+                    })),
+                    style::Print("█".repeat(context_width)),
+                    style::SetForegroundColor(Color::Blue),
+                    style::Print("|".repeat(if llm_width == 0 && llm_token_count > 0 {
+                        1
+                    } else {
+                        0
+                    })),
+                    style::Print("█".repeat(llm_width)),
+                    style::SetForegroundColor(Color::Magenta),
+                    style::Print("|".repeat(if user_width == 0 && user_token_count > 0 { 1 } else { 0 })),
+                    style::Print("█".repeat(user_width)),
+                    style::SetForegroundColor(Color::DarkGrey),
+                    style::Print("█".repeat(left_over_width)),
+                    style::Print(" "),
+                    style::SetForegroundColor(Color::Reset),
+                    style::Print(format!(
+                        "{:.2}%",
+                        (total_token_used as f32 / context_window_size as f32) * 100.0
+                    )),
+                )?;
+                
+                ChatState::PromptUser
             }
         })
     }
@@ -308,5 +391,13 @@ impl ChatContext {
                 Ok(ChatState::PromptUser)
             }
         }
+    }
+    
+    fn get_terminal_width(&self) -> usize {
+        // TODO: dynamically retrieve terminal width
+        let terminal_width = 80;
+        warn!("Terminal width is defaulting to fixed value: {}", terminal_width);
+        
+        terminal_width
     }
 }

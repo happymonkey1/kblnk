@@ -9,12 +9,15 @@ pub mod model;
 pub mod client;
 pub mod auth;
 pub mod error;
+mod consts;
 
 pub use client::GoogleModel;
 
 #[async_trait]
 pub trait StreamingClient {
     async fn send_message(&self, message: ConversationStateMessage) -> error::Result<SendMessageResponseStream>;
+
+    fn get_context_window_size(&self) -> usize;
 }
 
 /// ConversationState capable of being sent as a message via the streaming client
@@ -94,7 +97,10 @@ pub struct GitState {
     
 }
 
-pub struct LlmResponseMessage;
+pub struct LlmResponseMessage {
+    pub message_id: Option<String>,
+    pub content: String,
+}
 
 impl ConversationStateMessage {
     pub fn new(

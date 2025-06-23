@@ -1,4 +1,5 @@
 use thiserror::Error;
+use crate::platform::error::PlatformError;
 
 #[derive(Debug, Error)]
 pub enum AuthCredentialsError {
@@ -8,6 +9,8 @@ pub enum AuthCredentialsError {
     InitializationError,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    PlatformError(#[from] PlatformError),
 }
 
 pub type Result<T> = std::result::Result<T, AuthCredentialsError>;

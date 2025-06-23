@@ -6,7 +6,7 @@ use crate::cli::chat::context::{ContextFile, ContextManager};
 use crate::cli::chat::message::{LlmMessage, UserMessage, UserMessageContent};
 use crate::cli::chat::prompt::Prompt;
 use crate::cli::chat::Role;
-use crate::external::{ChatMessage, ConversationStateMessage};
+use crate::external::{ChatMessage, ConversationStateMessage, LlmResponseMessage};
 use crate::platform::PlatformContext;
 
 const CONTEXT_PROMPT: &str = "This summary contains all relevant information from your previous conversation with the user. You must reference this information when answering any and all subsequent user queries. Explicitly acknowledge specific details from the summary provided when they're relevant to the query.";
@@ -109,6 +109,10 @@ impl ConversationState {
         }
     }
     
+    pub fn context_message_length(&self) -> Option<usize> {
+        self.context_message_length
+    }
+    
     pub fn append_prompts(&mut self, mut prompts: VecDeque<Prompt>) -> Option<String> {
         let last_msg = prompts.pop_back()?;
         let (mut candidate_user, mut candidate_llm) = (None::<UserMessage>, None::<LlmMessage>);
@@ -156,7 +160,7 @@ impl ConversationState {
             .expect("Failed to convert in-memory conversation state to conversation state message!")
     }
     
-    async fn backend_conversation_state(&mut self) -> BackendConversationState<'_> {
+    pub async fn backend_conversation_state(&mut self) -> BackendConversationState<'_> {
         let conversation_start_context = None;
         
         let (context_messages, dropped_context_files) =
@@ -244,7 +248,7 @@ impl ConversationState {
 }
 
 /// Simple wrapper for a tuple of ([UserMessage], [LlmMessage])
-struct ConversationHistoryEntry {
+pub struct ConversationHistoryEntry {
     pub user_message: UserMessage,
     pub llm_message: LlmMessage,
 }
@@ -284,6 +288,43 @@ impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, Conv
             history,
         ))
     }
+
+    pub fn calculate_conversation_size(&self) -> ConversationSize {
+        let mut user_chars = 0;
+        let mut llm_chars = 0;
+        let mut context_chars = 0;
+
+        let history = self.history.clone();
+        for history_entry in history {
+            user_chars += history_entry.user_message.get_char_count();
+            llm_chars += history_entry.llm_message.get_char_count();
+        }
+
+        context_chars += self
+            .context_messages
+            .as_ref()
+            .map(|v| {
+                v.iter()
+                    .fold(0, |acc, ConversationHistoryEntry{ user_message, llm_message }| {
+                        acc + user_message.get_char_count() + llm_message.get_char_count()
+                    })
+            })
+            .unwrap_or_default();
+
+        ConversationSize {
+            context_messages: context_chars.into(),
+            user_messages: user_chars.into(),
+            assistant_messages: llm_chars.into(),
+        }
+    }
+}
+
+/// Token usage calculations of the conversation stored in-memory 
+#[derive(Debug, Clone, Copy)]
+pub struct ConversationSize {
+    pub context_messages: usize,
+    pub user_messages: usize,
+    pub assistant_messages: usize,
 }
 
 /// Flatten an in-memory conversation history into a series of [ChatMessage]
@@ -294,7 +335,7 @@ where
     history.fold(Vec::new(), |mut acc, entry| {
         let ConversationHistoryEntry { user_message, llm_message } = entry;
         acc.push(ChatMessage::UserInputMessage(user_message.clone().into_user_history()));
-        acc.push(ChatMessage::LlmResponseMessage(llm_message.clone().into()));
+        acc.push(ChatMessage::LlmResponseMessage(LlmResponseMessage::from(llm_message.clone())));
         acc
     })
 }

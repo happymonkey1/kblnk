@@ -8,6 +8,7 @@ pub enum ChatCommand {
     Clear,
     Context { subcommand: ContextSubcommand },
     Execute { command: String },
+    Usage,
     Exit,
     Help,
 }
@@ -15,6 +16,7 @@ pub enum ChatCommand {
 pub const COMPLETION_COMMANDS: &[&str] = &[
     "/clear",
     "/context show",
+    "/usage",
     "/exit",
     "/help"
 ];
@@ -57,10 +59,11 @@ impl ChatCommand {
                         }
                     }
                 }
+                "usage" | "u" => Self::Usage,
                 "exit" | "q" | "quit" => Self::Exit,
                 "help" | "h" | "?" => Self::Help,
                 unknown => {
-                    // Check for aliases (which may not be currently supported), and display corresponding command suggestion 
+                    // Check for aliases, which may not be currently supported, and display corresponding command suggestion(s) 
                     if let Some(suggestion) = Self::check_alias_commands(input) {
                         return Err(suggestion)
                     }

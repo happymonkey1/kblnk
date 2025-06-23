@@ -4,7 +4,7 @@ use crate::external::streaming_client::StreamingClient;
 use crate::external::ConversationStateMessage;
 use async_trait::async_trait;
 use google_ai_rs::{Client, TryIntoContents};
-
+use crate::external::consts::CONTEXT_WINDOW_SIZE_1_M;
 use crate::external::error::Result;
 
 // Reference: https://docs.rs/google-ai-rs/latest/google_ai_rs/
@@ -46,9 +46,15 @@ impl StreamingClient for GoogleStreamingClient {
         let model = self.client.generative_model(self.get_model_name())
             .with_response_format("application/json");
 
-        let response = model.stream_generate_content(message.try_into_contents()?)
+        let response_stream = model.stream_generate_content(message.try_into_contents()?)
             .await?;
         
-        Ok(SendMessageResponseStream::from(response))
+        Ok(SendMessageResponseStream::from(response_stream))
+    }
+
+    fn get_context_window_size(&self) -> usize {
+        match self.config.model {
+            GoogleModel::Gemini25Flash => CONTEXT_WINDOW_SIZE_1_M
+        }
     }
 }

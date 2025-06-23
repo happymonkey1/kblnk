@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::external::{EnvState, UserInputMessage, UserInputMessageContext};
+use crate::external::{EnvState, LlmResponseMessage, UserInputMessage, UserInputMessageContext};
 
 const USER_ENTRY_START: &str = "<user-query>";
 const USER_ENTRY_END: &str = "</user-query>";
@@ -66,6 +66,17 @@ impl UserMessage {
             UserMessageContent::Prompt { prompt } => Some(prompt.as_str())
         }
     }
+
+    pub fn get_char_count(&self) -> usize {
+        let content_count = match &self.content {
+            UserMessageContent::Prompt { prompt } => prompt.len()
+        };
+
+        let env_count = self.env_context.get_char_count();
+        let additional_context_count = self.additional_context.len();
+
+        content_count + env_count + additional_context_count
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,8 +90,37 @@ impl UserEnvContext {
             env_state: Some(EnvState::new()),
         }
     }
+    
+    /// Returns the estimated character count for the environment context
+    // TODO: how to keep updated if the struct members change?
+    pub fn get_char_count(&self) -> usize {
+        let env_state_count: usize = match &self.env_state {
+            Some(env) => {
+                let os_count = match &env.os {
+                    Some(os) => os.len(),
+                    None => 0,
+                };
+                
+                let env_var_count = env.env_variables.iter()
+                    .fold(0, |acc, v| {
+                        acc + v.key.len() + v.value.len()
+                    });
+                
+                let cwd_count = match &env.cwd {
+                    Some(cwd) => cwd.len(),
+                    None => 0
+                };
+                
+                os_count + env_var_count + cwd_count
+            }
+            None => 0
+        };
+        
+        env_state_count
+    }
 }
 
+#[derive(Clone)]
 pub enum LlmMessage {
     Response {
         message_id: Option<String>,
@@ -105,6 +145,35 @@ impl LlmMessage {
     pub fn content(&self) -> &str {
         match self {
             Self::Response { content, .. } => content.as_str(),
+        }
+    }
+    
+    /// Returns the estimated character count for the llm message
+    // TODO: how to keep updated if the struct members change?
+    pub fn get_char_count(&self) -> usize {
+        match &self {
+            LlmMessage::Response {
+                message_id,
+                content,
+            } => {
+                let message_id_count = match message_id {
+                    Some(msg_id) => msg_id.len(),
+                    None => 0,
+                };
+                
+                let content_count = content.len();
+                
+                message_id_count + content_count
+            }
+        }
+    }
+}
+
+impl From<LlmMessage> for LlmResponseMessage {
+    fn from(value: LlmMessage) -> Self {
+        Self {
+            message_id: value.message_id().map(|id| id.to_string()),
+            content: value.content().to_string(),
         }
     }
 }
