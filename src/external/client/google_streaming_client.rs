@@ -44,7 +44,7 @@ impl StreamingClient for GoogleStreamingClient {
     async fn send_message(&self, message: ConversationStateMessage) -> Result<SendMessageResponseStream> {
         // TODO: expose model configuration
         let model = self.client.generative_model(self.get_model_name())
-            .with_response_format("application/json");
+            .with_system_instruction(include_str!("../../../resources/system_prompt.md"));
 
         let response_stream = model.stream_generate_content(message.try_into_contents()?)
             .await?;

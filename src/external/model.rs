@@ -1,12 +1,6 @@
 use std::fmt::{Debug, Formatter, Write};
-use tracing_subscriber::fmt::format;
-use crate::external::error::StreamingClientError;
 
 use crate::external::error::Result;
-
-pub struct SendMessageResponse{
-    
-}
 
 pub enum SendMessageResponseStream{
     GoogleAiStudio(google_ai_rs::genai::ResponseStream),
@@ -30,11 +24,16 @@ impl Debug for SendMessageResponseStream {
 
 impl SendMessageResponseStream {
 
-    pub async fn recv(&mut self) -> Result<Option<ChatResponseStream>> {
+    pub async fn recv(&mut self) -> Result<ChatResponseStream> {
         match self {
             SendMessageResponseStream::GoogleAiStudio(response_stream) => {
-                Ok(response_stream.next().await?
-                    .map(|r| r.into()))
+                let chat_response = response_stream.next().await?
+                    .map_or(
+                        Ok(ChatResponseStream::EndStream { content: "".to_string() }),
+                        |r| ChatResponseStream::try_from(r)
+                    )?;
+                
+                Ok(chat_response)
             }
             SendMessageResponseStream::Mock(_) => todo!("recv not implement for mock SendMessageResponseStream")
         }
@@ -45,5 +44,6 @@ impl SendMessageResponseStream {
 #[derive(Debug)]
 pub enum ChatResponseStream {
     LlmResponseEvent{ content: String },
-    CodeEvent{ content: String },
+    EndStream { content: String },
+    InvalidLlmResponse,
 }

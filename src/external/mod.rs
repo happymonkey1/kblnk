@@ -24,12 +24,14 @@ pub trait StreamingClient {
 }
 
 /// ConversationState capable of being sent as a message via the streaming client
+#[derive(Debug)]
 pub struct ConversationStateMessage {
     conversation_id: Option<String>,
     user_input_message: Option<UserInputMessage>,
     history: Option<Vec<ChatMessage>>
 }
 
+#[derive(Debug)]
 pub enum ChatMessage {
     UserInputMessage(UserInputMessage),
     LlmResponseMessage(LlmResponseMessage),
@@ -100,6 +102,7 @@ pub struct GitState {
     
 }
 
+#[derive(Debug)]
 pub struct LlmResponseMessage {
     pub message_id: Option<String>,
     pub content: String,

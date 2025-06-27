@@ -80,14 +80,13 @@ impl StreamingClientConfig {
         let client_config_string = context.fs().read_to_string(client_config_filepath).await
             .map_err(|err| PlatformError::IoError(err))?;
         
-        let config: StreamingClientConfig = serde_json::from_str(client_config_string.as_str())?;
-        
-        Ok(config)
+        Ok(serde_json::from_str(client_config_string.as_str())?)
     }
 
     // TODO: config abstraction
     pub fn get_streaming_client_config_file_path(context: Arc<PlatformContext>) -> Result<PathBuf> {
         let app_dir = context.get_app_config_directory()?;
+        // TODO: should optionally read from env
         Ok(app_dir.join(STREAMING_CLIENT_CONFIG_FILE_NAME))
     }
     

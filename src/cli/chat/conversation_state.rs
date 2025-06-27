@@ -141,6 +141,7 @@ impl ConversationState {
     }
     
     pub fn push_llm_message(&mut self, message: LlmMessage) {
+        info!("Entered push_llm_message");
         debug_assert!(self.next_message.is_some(), "next_message should not be null");
         let next_user_message = self.next_message.take().expect("next_message should not be null");
         
@@ -148,20 +149,37 @@ impl ConversationState {
         self.history.push_back(ConversationHistoryEntry::new(next_user_message, message));
     }
     
+    fn update_conversation_history(&mut self) {
+        self.valid_history_range = (0, self.history.len())
+        
+        // TODO: cap max history length
+    }
+    
+    pub fn replace_history_with_summary(&mut self, summary: String) {
+        self.history.drain(..self.history.len().saturating_sub(1));
+        self.latest_summary = Some(summary);
+    }
+    
     /// Convert into a [external::ConversationStateMessage] capable of being sent to external APIs
     pub(crate) async fn as_sendable_conversation_state(&mut self) -> ConversationStateMessage {
         debug_assert!(self.next_message.is_some(), "next_message should not be null");
+        self.update_conversation_history();
         self.history.drain(self.valid_history_range.1..);
         self.history.drain(..self.valid_history_range.0);
         
         let context = self.backend_conversation_state().await;
         
-        context.into_conversation_state_message()
-            .expect("Failed to convert in-memory conversation state to conversation state message!")
+        let conversation_state_message = context.into_conversation_state_message()
+            .expect("Failed to convert in-memory conversation state to conversation state message!");
+        
+        info!("{:?}", &conversation_state_message);
+        
+        conversation_state_message
     }
     
     pub async fn backend_conversation_state(&mut self) -> BackendConversationState<'_> {
         let conversation_start_context = None;
+        self.update_conversation_history();
         
         let (context_messages, dropped_context_files) =
             self.build_context_messages(conversation_start_context).await;

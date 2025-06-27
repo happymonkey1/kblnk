@@ -19,12 +19,13 @@ use crate::cli::chat::error::ChatError;
 use crate::cli::chat::error::Result;
 use crate::cli::chat::command::{ChatCommand, ContextSubcommand};
 use crate::cli::chat::conversation_state::ConversationState;
+use crate::cli::chat::message::LlmMessage;
 use crate::cli::CLI_NAME;
 use crate::cli::util::input_source::InputSource;
 use crate::external::auth::auth_credentials::AuthCredentials;
 use crate::external::error::StreamingClientError;
 use crate::external::LlmServerProvider;
-use crate::external::model::SendMessageResponseStream;
+use crate::external::model::{ChatResponseStream, SendMessageResponseStream};
 use crate::external::streaming_client::{StreamingClientConfig, StreamingClientImpl};
 use crate::platform::error::PlatformError;
 use crate::platform::PlatformContext;
@@ -74,7 +75,7 @@ async fn init_chat_context() -> Result<ChatContext> {
 
     // Try to load config from a serialized file
     // When the file is not present (initial launch), prompt the user to enter requisite initialization information
-    let streaming_client_config = match StreamingClientConfig::build_streaming_client_config(Arc::clone(&context)).await {
+    let mut streaming_client_config = match StreamingClientConfig::build_streaming_client_config(Arc::clone(&context)).await {
         Ok(config) => Ok(config),
         Err(err) => match err {
             StreamingClientError::PlatformError(PlatformError::FileNotExistError) => {
@@ -83,6 +84,12 @@ async fn init_chat_context() -> Result<ChatContext> {
             err => Err(ChatError::StreamingClientError(err)),
         }
     }?;
+    
+    // Kinda hacky fix, but persisting streaming client config skips over saving the credentails, so we can
+    // store in a separate file. When loading a persisted config, the credentials are not loaded either.
+    if streaming_client_config.auth_credentials.is_none() {
+        streaming_client_config.auth_credentials = Some(AuthCredentials::build_config(Arc::clone(&context)).await?)
+    }
 
     debug_assert!(streaming_client_config.auth_credentials.is_some(), "auth credentials are not valid");
 
@@ -204,7 +211,7 @@ impl ChatContext {
         let conversation_state = ConversationState::new(context_clone, conversation_id).await;
         
         Ok(Self {
-            context: context,
+            context,
             output,
             input_source,
             conversation_state,
@@ -272,9 +279,15 @@ impl ChatContext {
                 queue!(self.output, style::SetForegroundColor(Color::Reset))?;
                 queue!(self.output, cursor::Hide)?;
                 execute!(self.output, style::Print("\n"))?;
-                execute!(self.output, style::Print("Thinking..."))?;
+                execute!(self.output, style::Print("Thinking...\n"))?;
 
+                self.conversation_state.set_next_user_message(prompt);
+                
                 let client_message = self.conversation_state.as_sendable_conversation_state().await;
+                
+                if (self.conversation_state.next_user_message().is_none()) {
+                    warn!("next_user_message in ConversationState is null!");
+                }
                 
                 ChatState::HandleLlmResponse(self.client.send_message(client_message).await?)
             }
@@ -455,9 +468,46 @@ impl ChatContext {
     
     async fn handle_response(
         &mut self,
-        response_stream: SendMessageResponseStream
+        mut response_stream: SendMessageResponseStream
     ) -> Result<ChatState> {
-        todo!("handle response is not implemented!")
+        info!("Entered handled_response");
+        let mut message_buffer: String = String::new();
+        loop {
+            match response_stream.recv().await {
+                Ok(response) =>{
+                    match response {
+                        ChatResponseStream::LlmResponseEvent { content } => {
+                            execute!(
+                                self.output,
+                                style::Print(&content), 
+                                style::Print("\n"),
+                            )?;
+                            message_buffer.push_str(&content);
+                        }
+                        ChatResponseStream::EndStream { content } => {
+                            self.conversation_state.push_llm_message(
+                                LlmMessage::new_response(
+                                    None,
+                                    message_buffer,
+                                )
+                            );
+                            
+                            info!("End of response stream");
+                            break Ok(ChatState::PromptUser)
+                        }
+                        ChatResponseStream::InvalidLlmResponse => {
+                            warn!("The llm response was invalid.");
+                            execute!(
+                                self.output,
+                                style::Print("Your assistant is having some trouble responding right now."), 
+                                style::Print("\n")
+                            )?;
+                        }
+                    }
+                }
+                Err(err) => return Err(ChatError::from(err))
+            }
+        }
     }
 
     async fn handle_state_execution_result(

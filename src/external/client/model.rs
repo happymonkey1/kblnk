@@ -1,8 +1,11 @@
 use google_ai_rs::{Content, Part, TryIntoContents};
 use google_ai_rs::genai::ResponseStream;
 use google_ai_rs::proto::GenerateContentResponse;
+use log::info;
+use serde_json::Value;
+use tracing::{debug, warn};
 use crate::external::{ChatMessage, ConversationStateMessage, LlmResponseMessage, UserInputMessage};
-use crate::external::client::{USER_ENV_CONTEXT_HEADER_END, USER_ENV_CONTEXT_HEADER_START};
+use crate::external::client::{LLM_RESPONSE_CONTEXT_HEADER_END, LLM_RESPONSE_CONTEXT_HEADER_START, USER_ENV_CONTEXT_HEADER_END, USER_ENV_CONTEXT_HEADER_START};
 use crate::external::error::StreamingClientError;
 use crate::external::model::{ChatResponseStream, SendMessageResponseStream};
 
@@ -50,7 +53,14 @@ impl TryInto<Part> for LlmResponseMessage {
     type Error = StreamingClientError;
 
     fn try_into(self) -> Result<Part, Self::Error> {
-        todo!()
+        let formatted_content = format!(
+            "{}\n{}\n{}",
+            LLM_RESPONSE_CONTEXT_HEADER_START,
+            self.content,
+            LLM_RESPONSE_CONTEXT_HEADER_END
+        );
+
+        Ok(Part::text(formatted_content.as_str()))
     }
 }
 
@@ -71,8 +81,34 @@ impl From<ResponseStream> for SendMessageResponseStream {
     }
 }
 
-impl From<GenerateContentResponse> for ChatResponseStream {
-    fn from(value: GenerateContentResponse) -> Self {
-        Self::LlmResponseEvent { content: value.text() }
+impl TryFrom<GenerateContentResponse> for ChatResponseStream {
+    type Error = StreamingClientError;
+
+    // TODO: verify in Google AI studio docs that the model is not hallucinating json responses...
+    fn try_from(value: GenerateContentResponse) -> Result<Self, Self::Error> {
+        let raw_response = value.text();
+        info!("raw llm response: {}", raw_response.as_str());
+
+        let json_response: Value = match serde_json::from_str(raw_response.as_str()) {
+            Ok(json_response) => json_response,
+            Err(err) => {
+                warn!("Failed to deserialize google AI response as json: {err:?}");
+                
+                return Ok(ChatResponseStream::LlmResponseEvent { content: raw_response })
+            } 
+        };
+        
+        // TODO: clean this up
+        let assistant_text = if let Some(assistant_text) = json_response.get("text") {
+            if let Some(text_str) = assistant_text.as_str() {
+                text_str.to_string()
+            } else {
+                return Ok(Self::InvalidLlmResponse)
+            }
+        } else {
+            return Ok(Self::InvalidLlmResponse)
+        };
+
+        Ok(Self::LlmResponseEvent { content: assistant_text })
     }
 }

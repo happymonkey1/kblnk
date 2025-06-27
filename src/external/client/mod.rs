@@ -8,6 +8,8 @@ pub const GEMINI_2_5_FLASH: &str = "gemini-2.5-flash";
 
 const USER_ENV_CONTEXT_HEADER_START: &str = "<user-env-context>";
 const USER_ENV_CONTEXT_HEADER_END: &str = "</user-env-context>";
+const LLM_RESPONSE_CONTEXT_HEADER_START: &str = "<previous-assistant-response>";
+const LLM_RESPONSE_CONTEXT_HEADER_END: &str = "</previous-assistant-response>";
 
 /// GenAI Model Name(s) for Google AI Studio
 #[derive(Clone, Debug, Serialize, Deserialize)]

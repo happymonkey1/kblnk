@@ -37,6 +37,7 @@ impl AuthCredentials {
     // TODO: config abstraction
     pub fn get_auth_credentials_file_path(context: Arc<PlatformContext>) -> Result<PathBuf> {
         let app_dir = context.get_app_config_directory()?;
+        // TODO: should optionally read from env
         Ok(app_dir.join(CREDENTIALS_FILE_NAME))
     }
 
