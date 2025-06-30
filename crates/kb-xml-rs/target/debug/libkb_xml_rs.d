@@ -1,0 +1,1 @@
+/home/happymonkey1/dev/kablunk/kb-vibe-cli/crates/kb-xml-rs/target/debug/libkb_xml_rs.rlib: /home/happymonkey1/dev/kablunk/kb-vibe-cli/crates/kb-xml-rs/src/error.rs /home/happymonkey1/dev/kablunk/kb-vibe-cli/crates/kb-xml-rs/src/lib.rs /home/happymonkey1/dev/kablunk/kb-vibe-cli/crates/kb-xml-rs/src/parser.rs

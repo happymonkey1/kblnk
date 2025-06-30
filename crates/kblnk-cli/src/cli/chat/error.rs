@@ -1,0 +1,51 @@
+use thiserror::Error;
+use kb_xml_rs::node::XmlNode;
+use crate::external::auth::error::AuthCredentialsError;
+use crate::external::error::StreamingClientError;
+use crate::external::streaming_client::StreamingClientConfigBuilderError;
+use crate::platform::error::PlatformError;
+
+pub type Result<T> = std::result::Result<T, ChatError>;
+
+#[derive(Debug, Error)]
+pub enum ChatError {
+    #[error("generic failure during initialize: {0}")]
+    InitializationError(String),
+    #[error("interrupted")]
+    Interrupted,
+    #[error("invalid user input")]
+    InvalidUserInput,
+    #[error("{0}")]
+    Readline(#[from] rustyline::error::ReadlineError),
+    #[error(transparent)]
+    SerdeJsonError(#[from] serde_json::error::Error),
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    StreamingClientError(#[from] StreamingClientError),
+    #[error(transparent)]
+    PlatformError(#[from] PlatformError),
+    #[error("failed to parse response")]
+    ResponseParseError,
+    #[error(transparent)]
+    XmlParseError(#[from] kb_xml_rs::error::ParseError),
+    #[error("unhandled xml node {0:?}")]
+    InvalidXmlNode(XmlNode),
+}
+
+impl From<StreamingClientConfigBuilderError> for ChatError {
+    fn from(value: StreamingClientConfigBuilderError) -> Self {
+        Self::InitializationError(format!("Streaming Client config construction failed: {value}"))
+    }
+}
+
+impl From<AuthCredentialsError> for ChatError {
+    fn from(value: AuthCredentialsError) -> Self {
+        match value {
+            AuthCredentialsError::SerdeJsonError(err) => ChatError::SerdeJsonError(err),
+            AuthCredentialsError::InitializationError => ChatError::InitializationError("Auth initialization error".to_string()),
+            AuthCredentialsError::IoError(err) => ChatError::IoError(err),
+            AuthCredentialsError::PlatformError(err) => ChatError::PlatformError(err),
+        }
+    }
+}
